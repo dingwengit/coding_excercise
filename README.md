@@ -15,7 +15,7 @@ This project is based on Python 3 (v3.6) and tested on Mac Pro laptop.
   * Next for each playlist json, apply the changes of change_file if the user_id matches in change_file 
   * Then convert each updated playlist json object into string and writes to output file
   * Justification on scale out
-    * memory usage: store all user_ids (4 bytes each) and song_ids (4 bytes each), assume each input_file has 500M users and 50 M songs, total memory 500M x 4 + 50 x 4 = 2.2 GB
+    * memory usage: store all user_ids (4 bytes each) and song_ids (4 bytes each), assume each input_file has 500M unique user ids and 50 M unique song ids, total memory 500M x 4 + 50 x 4 = 2.2 GB
     * input file are processed line-by-line, the memory needed is only for one-playlist json object
 
 * Change file
