@@ -15,9 +15,10 @@ class PlayListChange():
                              .format(input_file, change_file, output_file))
         self.input_file, self.change_file, self.output_file = \
             input_file, change_file, output_file
-        self.playlist_add, self.song_add, self.song_remove = \
-            dict(), dict(), dict()
+        self.playlist_add, self.song_add, self.playlist_remove = \
+            dict(), dict(), set()
         self.user_ids, self.song_ids = set(), set()
+        self.first_playlist = None
 
     def __get_ids(self, f, data_set):
         """
@@ -55,22 +56,17 @@ class PlayListChange():
                 if line.replace(' ', '') == "\"songs\":[\n":
                     self.__get_ids(f, self.song_ids)
 
-    def __update_songs(self, list_songs, new_songs, remove=False):
+    def __update_songs(self, list_songs, new_songs):
         """
         keey track song list for a specific user_id based on the sequence
         in the change_file
         :param list_songs: class member's song list for an user_id
         :param new_songs: song list in one line of change_file
-        :param remove: add or remove from list_songs
         :return:
         """
-        if remove:
-            return [song for song in list_songs if song not in new_songs]
-        else:
-            for song in new_songs:
-                if song not in list_songs:
-                    list_songs.append(song)
-        return list_songs
+        for song in new_songs:
+            if song not in list_songs:
+                list_songs.append(song)
 
     def __get_valid_song_ids(self, songs):
         """
@@ -86,7 +82,7 @@ class PlayListChange():
         # CSV format:
         # add playlist: playlist add user_id, song_ids
         # add song:     song add user_id, song_ids
-        # remove song:  song remove user_id, song_ids
+        # remove playlist: playlist remove user_id
         with open(self.change_file, 'r') as f:
             reader = csv.reader(f)
             for line in reader:
@@ -100,42 +96,34 @@ class PlayListChange():
                     continue
                 # playlist add
                 if row[0] == 'playlist' and row[1] == 'add':
+                    if len(songs) < 1:
+                        raise Exception("Playlist add must have at least one "
+                                        "song: {}".format(row))
                     if user_id not in self.playlist_add:
                         self.playlist_add[user_id] = songs
                     else:
                         self.__update_songs(self.playlist_add[user_id],
                                             songs)
-                # "song add" will handle previous "playlist add" and "song
+                # "song add" will handle previous "playlist add" and "playlist
                 # remove" if user_id is the same
                 if row[0] == 'song' and row[1] == 'add':
                     if user_id not in self.song_add:
                         self.song_add[user_id] = songs
                     else:
-                        self.song_add[user_id] = self.__update_songs(
-                            self.song_add[user_id], songs)
+                        self.__update_songs(self.song_add[user_id], songs)
                     if user_id in self.playlist_add:
-                        self.playlist_add[user_id] = self.__update_songs(
-                            self.playlist_add[user_id], songs)
-                    if user_id in self.song_remove:
-                        self.song_remove[user_id] = self.__update_songs(
-                            self.song_remove[user_id], songs,
-                            remove=True)
-                # "song remove" will handle previous "playlist add" and "song
+                        self.__update_songs(self.playlist_add[user_id], songs)
+                    if user_id in self.playlist_remove:
+                        self.playlist_remove.remove(user_id)
+
+                # "playlist remove" will handle previous "playlist add" and "song
                 # add" if user_id is the same
-                if row[0] == 'song' and row[1] == 'remove':
-                    if user_id not in self.song_remove:
-                        self.song_remove[user_id] = songs
-                    else:
-                        self.__update_songs(self.song_remove[user_id],
-                                            songs)
+                if row[0] == 'playlist' and row[1] == 'remove':
+                    self.playlist_remove.add(user_id)
                     if user_id in self.playlist_add:
-                        self.playlist_add[user_id] = self.__update_songs(
-                            self.playlist_add[user_id], songs,
-                            remove=True)
+                        del self.playlist_add[user_id]
                     if user_id in self.song_add:
-                        self.song_add[user_id] = self.__update_songs(
-                            self.song_add[user_id], songs,
-                            remove=True)
+                        del self.song_add[user_id]
 
     def __apply_change(self, one_playlist):
         """
@@ -155,10 +143,9 @@ class PlayListChange():
             for song in self.song_add[user_id]:
                 if song not in one_playlist['song_ids']:
                     one_playlist['song_ids'].append(song)
-        if user_id in self.song_remove:
-            for song in self.song_remove[user_id]:
-                one_playlist['song_ids'] = [item for item in one_playlist[
-                    'song_ids'] if item != song]
+        if user_id in self.playlist_remove:
+            one_playlist['song_ids'] = None
+
         # one_playlist['song_ids'] = sorted(one_playlist['song_ids'],
         #                                   key = lambda k: int(k))
 
@@ -174,29 +161,30 @@ class PlayListChange():
             max_playlist_id += 1
             cnt += 1
             json_obj.clear()
-            json_obj['id'] = max_playlist_id
+            json_obj['id'] = str(max_playlist_id)
             json_obj['user_id'] = k
             json_obj['song_ids'] = v
-            if cnt == len(self.playlist_add):
-                output.write(self.__format_one_playlist(json_obj, True))
-            else:
-                output.write(self.__format_one_playlist(json_obj))
+            self.__format_one_playlist(output, json_obj)
 
-    def __format_one_playlist(self, one_playlist, end_obj = False):
+    def __format_one_playlist(self, output, one_playlist):
         """
         convert json obj into string
+        :param output: output file
         :param one_playlist: one playlist json object
-        :param end_obj: is this end of object
         :return:
         """
-        json_str = json.dumps(one_playlist, indent=6,
-                              separators=(",", ":"))
+        if one_playlist['song_ids'] is None: # playlist deleted
+            return
+        if self.first_playlist is None:
+            self.first_playlist = True
+        json_str = json.dumps(one_playlist, indent=6, separators=(",", ":"))
         json_str = json_str.replace("{", "    {")
-        if end_obj:
-            json_str = json_str.replace("}", "    }\n")
+        json_str = json_str.replace("}", '')
+        if self.first_playlist:
+            output.write(json_str)
+            self.first_playlist = False
         else:
-            json_str = json_str.replace("}", "    },\n")
-        return json_str
+            output.write("    }},\n{}".format(json_str))
 
     def __process_playlist(self, input, output):
         """
@@ -209,6 +197,8 @@ class PlayListChange():
         for line in input:
             filter_line = line.replace(" ", '')
             if filter_line == "],\n":
+                if self.first_playlist is not None:
+                    output.write("    }\n")
                 output.write(line)
                 return
             if filter_line == "{\n":
@@ -222,14 +212,12 @@ class PlayListChange():
                     self.__apply_change(one_playlist)
                     if filter_line == "}\n":
                         if len(self.playlist_add) == 0:
-                            output.write(
-                                self.__format_one_playlist(one_playlist), True)
+                            self.__format_one_playlist(output, one_playlist)
                         else:
-                            output.write(
-                                self.__format_one_playlist(one_playlist))
+                            self.__format_one_playlist(output, one_playlist)
                             self.__add_playlist(output, max_playlist_id)
                     else:
-                        output.write(self.__format_one_playlist(one_playlist))
+                        self.__format_one_playlist(output, one_playlist)
                 except Exception as ex:
                     print("Failed to load json_blob:{} due to exception {"
                           "}".format(json_blob, ex))

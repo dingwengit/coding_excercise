@@ -1,8 +1,6 @@
 playlist,add,3,1,2,3
 playlist,add,5,4,5,3
-song,remove,7, 3, 4, 5
+playlist,remove,7
 playlist, add,6,4,5,3
 song,add,2,8,32,2
 song,add,5,1,2,3
-playlist, add,6,4,5,23,51
-song,remove,6, 3, 4, 5
